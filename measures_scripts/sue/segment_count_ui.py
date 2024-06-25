@@ -10,7 +10,7 @@ import unicodedata
 import statistics
 from subprocess import call
 from polyglot.text import Text
-
+from tqdm import tqdm
 
 def tokenize(line):
     RE_BAD_CHARS = regex.compile(r"\p{Cc}|\p{Cs}")
@@ -41,7 +41,7 @@ def clump_bpe(segmented, substituted):
             segments.append(line.strip())
 
     result = []
-    for word in segments:
+    for word in tqdm(segments):
         new_word = word
 
         start = re.search('^[^@]@@( [^@]@@)+', new_word)
@@ -109,55 +109,76 @@ def find_files(start, pattern):
     return all_lang_results
 
 
-def preprocess(filename):
+import os
+from concurrent.futures import ProcessPoolExecutor
+from tqdm import tqdm
+import multiprocessing
+
+def process_chunk(lines):
+    processed_lines = []
+    for text_line in lines:
+        text_line = text_line.strip()
+        removed_punct_line = remove_punctuation(text_line)
+        tokenized_line = tokenize(removed_punct_line)
+        if len(tokenized_line) > 0:
+            for token in tokenized_line:
+                if token != '\n' and token != '\r\n' and token != '\r':
+                    processed_lines.append(token.lower().strip() + '\n')
+    return processed_lines
+
+def preprocess(filename, num_workers=32):
     with open(filename, 'r') as f:
-        result_fpath = filename.replace('_full', '_tokenized')
-        with open(result_fpath, 'w') as f_result:
-            for text_line in f:
-                text_line = text_line.strip()
-                removed_punct_line = remove_punctuation(text_line)
-                # simple tokenization, in case polyglot.text doesn't work
-                # tokenized_line = removed_punct_line.split(' ')
-                tokenized_line = tokenize(removed_punct_line)
-                if len(tokenized_line) > 0:
-                    for token in tokenized_line:
-                        if token != '\n' and token != '\r\n' and token != '\r':
-                            f_result.write(token.lower().strip() + '\n')
+        lines = f.readlines()
+
+    chunk_size = len(lines) // num_workers
+    chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+    
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        results = list(tqdm(executor.map(process_chunk, chunks), total=len(chunks)))
+    
+    result_fpath = filename.replace('_full', '_tokenized')
+    with open(result_fpath, 'w') as f_result:
+        for result in results:
+            f_result.writelines(result)
+    
     return result_fpath
 
 
 def main():
     # generate sh files for BPE
     print('BPE-MIN-R')
+    # make this file's directory the CWD
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    os.makedirs("../train/bpe-min-r/", exist_ok=True)
 
-    with open('../train/bpe-min-r/learn-bpe.sh', 'w') as f_learn_bpe:
-        with open('../train/bpe-min-r/apply-bpe.sh', 'w') as f_apply_bpe:
-            for root, dirs, files in os.walk('../train/'):
-                for file in files:
-                    if file.endswith('full.txt'):
-                        print(file)
+    # with open('../train/bpe-min-r/learn-bpe.sh', 'w+') as f_learn_bpe:
+    #     with open('../train/bpe-min-r/apply-bpe.sh', 'w+') as f_apply_bpe:
+    #         for root, dirs, files in os.walk('../train/'):
+    #             for file in files:
+    #                 if file.endswith('full.txt'):
+    #                     print(file)
 
-                        # preprocess, tokenize
-                        tokenized_file = preprocess(os.path.join(root, file))
+    #                     # preprocess, tokenize
+    #                     tokenized_file = preprocess(os.path.join(root, file))
 
-                        file_codes = '../train/bpe-min-r/' + file[:-9] + '_codes.txt'
-                        file_segm = '../train/bpe-min-r/' + file[:-9] + '_segmented.txt'
+    #                     file_codes = '../train/bpe-min-r/' + file[:-9] + '_codes.txt'
+    #                     file_segm = '../train/bpe-min-r/' + file[:-9] + '_segmented.txt'
 
-                        # the number 200 has to be adjusted to different languages
-                        learn_line = 'subword-nmt learn-bpe -s 200 < ' + \
-                                     tokenized_file + ' > ' + file_codes
-                        apply_line = 'subword-nmt apply-bpe -c ' + file_codes + \
-                                     ' < ' + tokenized_file + ' > ' + file_segm
-                        print(learn_line)
-                        print(apply_line)
-                        f_learn_bpe.write(learn_line + '\n')
-                        f_apply_bpe.write(apply_line + '\n')
+    #                     # the number 200 has to be adjusted to different languages
+    #                     learn_line = 'subword-nmt learn-bpe -s 200 < ' + \
+    #                                  tokenized_file + ' > ' + file_codes
+    #                     apply_line = 'subword-nmt apply-bpe -c ' + file_codes + \
+    #                                  ' < ' + tokenized_file + ' > ' + file_segm
+    #                     print(learn_line)
+    #                     print(apply_line)
+    #                     f_learn_bpe.write(learn_line + '\n')
+    #                     f_apply_bpe.write(apply_line + '\n')
 
-    # learn bpe 200 codes; this is recommended to be run separately in the terminal!
-    call('../train/bpe-min-r/learn-bpe.sh', shell=True)
+    # # learn bpe 200 codes; this is recommended to be run separately in the terminal!
+    # call('../train/bpe-min-r/learn-bpe.sh', shell=True)
 
-    # apply bpe 200; this is recommended to be run separately in the terminal!
-    call('../train/bpe-min-r/apply-bpe.sh', shell=True)
+    # # apply bpe 200; this is recommended to be run separately in the terminal!
+    # call('../train/bpe-min-r/apply-bpe.sh', shell=True)
 
     for mode in ['bpe-min-r']:
         for root, dirs, files in os.walk('../train/'):
@@ -182,7 +203,7 @@ def main():
                         genre = 'na'
 
                         with open(substituted_file, 'r') as f:
-                            for line in f:
+                            for line in tqdm(f):
                                 word_split = line.strip()
                                 segments = line.strip().split('|')
                                 word = ''.join(segments)

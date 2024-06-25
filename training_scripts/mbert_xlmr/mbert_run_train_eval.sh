@@ -1,4 +1,4 @@
-for j in 2 3 4 5
+for j in 2
 do
 
 for i in ../lang_transfer_sets/train/*train.txt
@@ -27,9 +27,9 @@ python3 run_mlm_no_trainer.py \
     --train_file=$TRAIN_FILE \
     --validation_file=$TEST_FILE \
     --test_folder_path=$TEST_FOLDER \
-    --num_train_epochs=5 \
+    --num_train_epochs=1 \
     --learning_rate=3e-5 \
-    --per_device_train_batch_size=4 \
+    --per_device_train_batch_size=2 \
     --gradient_accumulation_steps=32
 
 done

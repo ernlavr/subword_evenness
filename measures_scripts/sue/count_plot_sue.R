@@ -9,6 +9,10 @@
 # install.packages("Morpho")
 # install.packages("scales")
 
+require(devtools)
+library(devtools)
+install_github("zarquon42b/Morpho")
+
 library(ggplot2)
 library(tidyverse)
 library(gridExtra)
@@ -20,8 +24,8 @@ library(REdaS)
 library(Morpho)
 library(scales)
 
-langs_short <- c('basque', 'eng', 'finnish', 'french', 'german', 'greek_modern', 'hebrew_modern', 'hindi', 'indonesian', 'japanese', 'korean', 'mandarin', 'persian', 'russian', 'spanish', 'tagalog', 'thai', 'turkish', 'vietnamese')
-langs_full <- c('Basque', 'English', 'Finnish', 'French', 'German', 'Greek', 'Hebrew', 'Hindi', 'Indonesian', 'Japanese', 'Korean', 'Mandarin', 'Persian', 'Russian', 'Spanish', 'Tagalog', 'Thai', 'Turkish', 'Vietnamese')
+langs_short <- c('eng', 'german')
+langs_full <- c('English', 'German')
 
 Language <- c(NA)
 Angle <- c(NA)
