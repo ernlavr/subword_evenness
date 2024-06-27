@@ -11,6 +11,19 @@ import statistics
 from subprocess import call
 from polyglot.text import Text
 from tqdm import tqdm
+import os
+from concurrent.futures import ProcessPoolExecutor
+from tqdm import tqdm
+import multiprocessing
+import argparse
+from pathlib import Path
+import codecs
+
+# For learning and applying subword nmt
+sys.path.append('/subword-nmt/')
+import subword_nmt.learn_bpe as lb
+import subword_nmt.apply_bpe as ab
+
 
 def tokenize(line):
     RE_BAD_CHARS = regex.compile(r"\p{Cc}|\p{Cs}")
@@ -27,6 +40,8 @@ def tokenize(line):
         tokens = []
     return tokens
 
+def get_this_dir():
+    return os.path.dirname(os.path.abspath(__file__))
 
 def remove_punctuation(text):
     tbl = dict.fromkeys(i for i in range(sys.maxunicode)
@@ -109,11 +124,6 @@ def find_files(start, pattern):
     return all_lang_results
 
 
-import os
-from concurrent.futures import ProcessPoolExecutor
-from tqdm import tqdm
-import multiprocessing
-
 def process_chunk(lines):
     processed_lines = []
     for text_line in lines:
@@ -126,7 +136,7 @@ def process_chunk(lines):
                     processed_lines.append(token.lower().strip() + '\n')
     return processed_lines
 
-def preprocess(filename, num_workers=32):
+def preprocess(filename, output_dir, num_workers=4):
     with open(filename, 'r') as f:
         lines = f.readlines()
 
@@ -136,7 +146,9 @@ def preprocess(filename, num_workers=32):
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         results = list(tqdm(executor.map(process_chunk, chunks), total=len(chunks)))
     
-    result_fpath = filename.replace('_full', '_tokenized')
+    # filename retrieve file extension
+    filename_path = Path(filename)
+    result_fpath =  os.path.join(output_dir, filename_path.stem + '_tokenized' + filename_path.suffix)
     with open(result_fpath, 'w') as f_result:
         for result in results:
             f_result.writelines(result)
@@ -144,52 +156,83 @@ def preprocess(filename, num_workers=32):
     return result_fpath
 
 
+def learn_bpe(tokenized_file: str, outfile: str, num_symbols=200):
+    """ Learn BPE from the tokenized file.
+        Args:
+            tokenized_file: file with tokenized text
+            outfile: file to write the output to
+            num_symbols: number of BPE symbols to learn
+    """
+    lbpe_input = codecs.open(tokenized_file, encoding='utf-8')
+    lbpe_output = codecs.open(outfile, 'w', encoding='utf-8')
+    lb.learn_bpe(infile=lbpe_input, outfile=lbpe_output, num_symbols=num_symbols)
+    
+    # Close cuz streamwriter
+    lbpe_output.flush()
+    lbpe_output.close()
+
+def apply_bpe(tokenized_file, outfile, codes, dropout=0):
+    """ Apply BPE to the tokenized file.
+        Args:
+            tokenized_file: file with tokenized text
+            outfile: file to write the output to
+            codes: file with BPE codes (output of learn_bpe)
+            dropout: dropout rate
+    """
+    tokenized_r = codecs.open(tokenized_file, encoding='utf-8')
+    codes_r = codecs.open(codes, encoding='utf-8')
+    segmented_w = codecs.open(outfile, 'w', encoding='utf-8')
+    bpe = ab.BPE(codes_r)
+
+    # loop over the infile and apply the BPE
+    for line in tokenized_r:
+        segmented_w.write(bpe.process_line(line, dropout))
+    
+    # Close the files cuz streamwriter..
+    segmented_w.flush()
+    segmented_w.close()
+
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-l', '--language', type=str, default='english', help='Language to process')
+    parser.add_argument('-e', '--extension', type=str, default='train', help='Training split extension of the file. Either "full" or "train"')
+    return parser.parse_args()
+
+
 def main():
-    # generate sh files for BPE
+    # Setup
     print('BPE-MIN-R')
-    # make this file's directory the CWD
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    os.makedirs("../train/bpe-min-r/", exist_ok=True)
+    
+    args = get_args()
+    file = args.language + "_" + args.extension + ".txt"
+    OUTPUT_DIR = os.path.join("output", args.language)
+    os.makedirs(os.path.join(get_this_dir(), "..", "..", OUTPUT_DIR), exist_ok=True)
+    print(f"Processing: {file}")
+    file_path = Path(file)
+    file_path_stem = file_path.stem
+    file_path_extension = file_path.suffix
 
-    # with open('../train/bpe-min-r/learn-bpe.sh', 'w+') as f_learn_bpe:
-    #     with open('../train/bpe-min-r/apply-bpe.sh', 'w+') as f_apply_bpe:
-    #         for root, dirs, files in os.walk('../train/'):
-    #             for file in files:
-    #                 if file.endswith('full.txt'):
-    #                     print(file)
-
-    #                     # preprocess, tokenize
-    #                     tokenized_file = preprocess(os.path.join(root, file))
-
-    #                     file_codes = '../train/bpe-min-r/' + file[:-9] + '_codes.txt'
-    #                     file_segm = '../train/bpe-min-r/' + file[:-9] + '_segmented.txt'
-
-    #                     # the number 200 has to be adjusted to different languages
-    #                     learn_line = 'subword-nmt learn-bpe -s 200 < ' + \
-    #                                  tokenized_file + ' > ' + file_codes
-    #                     apply_line = 'subword-nmt apply-bpe -c ' + file_codes + \
-    #                                  ' < ' + tokenized_file + ' > ' + file_segm
-    #                     print(learn_line)
-    #                     print(apply_line)
-    #                     f_learn_bpe.write(learn_line + '\n')
-    #                     f_apply_bpe.write(apply_line + '\n')
-
-    # # learn bpe 200 codes; this is recommended to be run separately in the terminal!
-    # call('../train/bpe-min-r/learn-bpe.sh', shell=True)
-
-    # # apply bpe 200; this is recommended to be run separately in the terminal!
-    # call('../train/bpe-min-r/apply-bpe.sh', shell=True)
-
+    # preprocess, tokenize
+    tokenized_file = preprocess(os.path.join("res", file), OUTPUT_DIR, multiprocessing.cpu_count())
+    
+    # learn and apply BPE
+    file_codes = os.path.join(OUTPUT_DIR, file_path_stem + '_codes' + file_path_extension)
+    file_segm = os.path.join(OUTPUT_DIR, file_path_stem + '_segmented' + file_path_extension)
+    learn_bpe(tokenized_file, file_codes, 200)
+    apply_bpe(tokenized_file, file_segm, file_codes)
+    
     for mode in ['bpe-min-r']:
-        for root, dirs, files in os.walk('../train/'):
+        for root, dirs, files in os.walk('res/'):
             for file in files:
                 if file.endswith('full.txt'):
                     print(file)
-                    segmented_file = os.path.join('../train/' + mode + '/' + file[:-9] + '_segmented.txt')
+                    segmented_file = file_segm
                     print(segmented_file)
 
-                    substituted_file = os.path.join('../train/' + mode + '/' + file[:-9] + '_substituted.txt')
-                    results_file = os.path.join('../train/' + mode + '/' + file[:-9] + '_results.csv')
+                    substituted_file = os.path.join(OUTPUT_DIR, file_path_stem + '_substituted' + file_path_extension)
+                    results_file = os.path.join(OUTPUT_DIR, file_path_stem + '_results.csv')
 
                     if mode == 'bpe-min-r':
                         clump_bpe(segmented_file, substituted_file)
