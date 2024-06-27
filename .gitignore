@@ -1,10 +1,13 @@
 # Custom
 .vscode/
 .idea/
+output/
+res/
 
 # text and pdf files in any subdirectory
 **/*.txt
 **/*.pdf
+**/*.png
 
 
 
