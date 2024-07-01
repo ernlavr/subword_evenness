@@ -18,30 +18,37 @@ import multiprocessing
 import argparse
 from pathlib import Path
 import codecs
+import transformers
 
-# For learning and applying subword nmt
-sys.path.append('/subword-nmt/')
 import subword_nmt.learn_bpe as lb
 import subword_nmt.apply_bpe as ab
 
+# Consts
+HF_TOKENIZER = transformers.AutoTokenizer.from_pretrained("res/mbart-cleaned-deploy")
+USE_HF_TOKENIZER = True
+RE_BAD_CHARS = regex.compile(r"\p{Cc}|\p{Cs}")
+
+def remove_bad_chars(text):
+    return RE_BAD_CHARS.sub("", text)
 
 def tokenize(line):
-    RE_BAD_CHARS = regex.compile(r"\p{Cc}|\p{Cs}")
-
-    def remove_bad_chars(text):
-        return RE_BAD_CHARS.sub("", text)
-
     new_line = remove_bad_chars(line)
     text = Text(new_line)
-
     try:
         tokens = text.words
     except ValueError:
         tokens = []
     return tokens
 
+def tokenize_hf(line):
+    new_line = remove_bad_chars(line)
+    tokens = HF_TOKENIZER.tokenize(new_line, add_special_tokens=False)
+    return tokens
+    
+
 def get_this_dir():
     return os.path.dirname(os.path.abspath(__file__))
+
 
 def remove_punctuation(text):
     tbl = dict.fromkeys(i for i in range(sys.maxunicode)
@@ -115,6 +122,35 @@ def count_variance(segments):
     return variance
 
 
+def process_tokens_recursive(tokens, current_word="", final_words=None):
+    # Initialize final_words list on the first call
+    if final_words is None:
+        final_words = []
+
+    # Base case: if tokens list is empty, finalize and return
+    if not tokens:
+        if current_word:
+            final_words.append(current_word)
+        return final_words
+
+    # Pop the first token from the list
+    token = tokens.pop(0)
+
+    # Check if the token denotes the start of a new word
+    if token.startswith('▁'):
+        # If we are currently building a word, add it to final words list
+        if current_word:
+            final_words.append(current_word)
+        # Start a new word
+        current_word = token[1:]
+    else:
+        # Continue building the current word
+        current_word += token
+
+    # Recursive call with the remaining tokens
+    return process_tokens_recursive(tokens, current_word, final_words)
+
+
 def find_files(start, pattern):
     all_lang_results = []
     for root, dirs, files in os.walk(start):
@@ -129,12 +165,25 @@ def process_chunk(lines):
     for text_line in lines:
         text_line = text_line.strip()
         removed_punct_line = remove_punctuation(text_line)
-        tokenized_line = tokenize(removed_punct_line)
-        if len(tokenized_line) > 0:
-            for token in tokenized_line:
-                if token != '\n' and token != '\r\n' and token != '\r':
-                    processed_lines.append(token.lower().strip() + '\n')
+
+        # HF tokenizer
+        if USE_HF_TOKENIZER:
+            tokenized_line = tokenize_hf(removed_punct_line)
+            if len(tokenized_line) > 0:
+                recursive_tokens = process_tokens_recursive(tokenized_line)
+                for word in recursive_tokens:
+                    processed_lines.append(word.lower() + '\n')
+
+        # Old BPE stuff
+        else:
+            tokenized_line = tokenize(removed_punct_line)
+            if len(tokenized_line) > 0:
+                for token in tokenized_line:
+                    if token != '\n' and token != '\r\n' and token != '\r':
+                        processed_lines.append(token.lower().strip() + '\n')
+
     return processed_lines
+
 
 def preprocess(filename, output_dir, num_workers=4):
     with open(filename, 'r') as f:
@@ -170,6 +219,7 @@ def learn_bpe(tokenized_file: str, outfile: str, num_symbols=200):
     # Close cuz streamwriter
     lbpe_output.flush()
     lbpe_output.close()
+    
 
 def apply_bpe(tokenized_file, outfile, codes, dropout=0):
     """ Apply BPE to the tokenized file.
@@ -192,12 +242,44 @@ def apply_bpe(tokenized_file, outfile, codes, dropout=0):
     segmented_w.flush()
     segmented_w.close()
 
+def apply_hf_tokenizer(tokenized_file, outfile, model_name='bert-base-uncased'):
+    """ Apply Hugging Face tokenizer to the tokenized file.
+        Args:
+            tokenized_file: file with tokenized text
+            outfile: file to write the output to
+            model_name: model name of the tokenizer
+    """
+    # Load the tokenizer
+
+    # Open the input and output files
+    with codecs.open(tokenized_file, encoding='utf-8') as tokenized_r, \
+            codecs.open(outfile, 'w', encoding='utf-8') as segmented_w:
+        
+        # Loop over the infile and tokenize each line
+        for line in tokenized_r:
+            # Tokenize the line
+            tokens = HF_TOKENIZER.tokenize(line)
+            segment = None
+
+            # Remove the special token prefix
+            for i, token in enumerate(tokens):
+                if token.startswith('▁'):
+                    tokens[i] = token[1:]
+
+            # If there are subwords, join them with a pipe
+            if len(tokens) > 1:
+                segment = "|".join(tokens)
+            else:
+                segment = tokens[0]
+
+            # Convert tokens back to string and write to outfile
+            segmented_w.write(f"{segment}\n")
 
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-l', '--language', type=str, default='english', help='Language to process')
-    parser.add_argument('-e', '--extension', type=str, default='train', help='Training split extension of the file. Either "full" or "train"')
+    parser.add_argument('-e', '--extension', type=str, default='full', help='Training split extension of the file. Either "full" or "train"')
     return parser.parse_args()
 
 
@@ -218,11 +300,18 @@ def main():
     tokenized_file = preprocess(os.path.join("res", file), OUTPUT_DIR, multiprocessing.cpu_count())
     
     # learn and apply BPE
+    print("Tokenizing")
     file_codes = os.path.join(OUTPUT_DIR, file_path_stem + '_codes' + file_path_extension)
     file_segm = os.path.join(OUTPUT_DIR, file_path_stem + '_segmented' + file_path_extension)
-    learn_bpe(tokenized_file, file_codes, 200)
-    apply_bpe(tokenized_file, file_segm, file_codes)
+    # learn_bpe(tokenized_file, file_codes, 200)
+    if USE_HF_TOKENIZER:
+        apply_hf_tokenizer(tokenized_file, file_segm, file_codes)
+    else:
+        learn_bpe(tokenized_file, file_codes, 200)
+        apply_bpe(tokenized_file, file_segm, file_codes)
     
+    
+    print("Computing results")
     for mode in ['bpe-min-r']:
         for root, dirs, files in os.walk('res/'):
             for file in files:
@@ -234,15 +323,19 @@ def main():
                     substituted_file = os.path.join(OUTPUT_DIR, file_path_stem + '_substituted' + file_path_extension)
                     results_file = os.path.join(OUTPUT_DIR, file_path_stem + '_results.csv')
 
-                    if mode == 'bpe-min-r':
-                        clump_bpe(segmented_file, substituted_file)
+                    if mode == 'bpe-min-r' and USE_HF_TOKENIZER == False:
+                        clump_bpe(file_segm, substituted_file)
+                    else:
+                        # copy segmented file to substituted file, use system command
+                        call(['cp', segmented_file, substituted_file])
+                        
 
                     with open(results_file, 'w', newline='') as sequences_results:
                         seq_writer = csv.writer(sequences_results, delimiter='\t')
                         seq_writer.writerow(['word_split', 'segments_lengths', 'word_length',
                                              'index', 'variance', 'word',
                                              'file', 'genre', 'language'])
-                        lang = file[:-9]
+                        lang = file.split("_")[0]
                         genre = 'na'
 
                         with open(substituted_file, 'r') as f:

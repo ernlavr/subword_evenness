@@ -24,8 +24,8 @@ library(REdaS)
 library(Morpho)
 library(scales)
 
-langs_short <- c('eng', 'german')
-langs_full <- c('English', 'German')
+langs_short <- c('english', 'sango', 'papiamento', 'haiti')
+langs_full <- c('English', 'Sango', 'Papiamento', 'Haiti')
 
 Language <- c(NA)
 Angle <- c(NA)
