@@ -261,6 +261,11 @@ def apply_hf_tokenizer(tokenized_file, outfile, model_name='bert-base-uncased'):
             tokens = HF_TOKENIZER.tokenize(line)
             segment = None
 
+            # if last token is only ▁, remove it
+            if tokens[-1] == '▁':
+                tokens = tokens[:-1]
+            
+
             # Remove the special token prefix
             for i, token in enumerate(tokens):
                 if token.startswith('▁'):
@@ -334,6 +339,7 @@ def main():
         results_file = os.path.join(results_dir, file_path_stem + '_results.csv')
 
         if mode == 'bpe-min-r' and USE_HF_TOKENIZER == False:
+            print("Clumping BPE")
             clump_bpe(file_segm, substituted_file)
         else:
             # copy segmented file to substituted file, use system command
