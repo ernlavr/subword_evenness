@@ -279,6 +279,7 @@ def apply_hf_tokenizer(tokenized_file, outfile, model_name='bert-base-uncased'):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-l', '--language', type=str, default='english', help='Language to process')
+    parser.add_argument('-f', '--full', action='store_true', help='Process the full file instead of the training split', default=False)
     parser.add_argument('-e', '--extension', type=str, default='full', help='Training split extension of the file. Either "full" or "train"')
     return parser.parse_args()
 
@@ -288,67 +289,76 @@ def main():
     print('BPE-MIN-R')
     
     args = get_args()
-    file = args.language + "_" + args.extension + ".txt"
-    OUTPUT_DIR = os.path.join("output", args.language)
-    os.makedirs(os.path.join(get_this_dir(), "..", "..", OUTPUT_DIR), exist_ok=True)
-    print(f"Processing: {file}")
-    file_path = Path(file)
-    file_path_stem = file_path.stem
-    file_path_extension = file_path.suffix
-
-    # preprocess, tokenize
-    tokenized_file = preprocess(os.path.join("res", file), OUTPUT_DIR, multiprocessing.cpu_count())
     
-    # learn and apply BPE
-    print("Tokenizing")
-    file_codes = os.path.join(OUTPUT_DIR, file_path_stem + '_codes' + file_path_extension)
-    file_segm = os.path.join(OUTPUT_DIR, file_path_stem + '_segmented' + file_path_extension)
-    # learn_bpe(tokenized_file, file_codes, 200)
-    if USE_HF_TOKENIZER:
-        apply_hf_tokenizer(tokenized_file, file_segm, file_codes)
+    files = None
+    if args.full:
+        files = os.listdir('res/')
+        files = [f for f in files if args.extension in f]
     else:
-        learn_bpe(tokenized_file, file_codes, 200)
-        apply_bpe(tokenized_file, file_segm, file_codes)
-    
-    
-    print("Computing results")
-    for mode in ['bpe-min-r']:
-        for root, dirs, files in os.walk('res/'):
-            for file in files:
-                if file.endswith('full.txt'):
-                    print(file)
-                    segmented_file = file_segm
-                    print(segmented_file)
+        files = [args.language + "_" + args.extension + ".txt"]
 
-                    substituted_file = os.path.join(OUTPUT_DIR, file_path_stem + '_substituted' + file_path_extension)
-                    results_file = os.path.join(OUTPUT_DIR, file_path_stem + '_results.csv')
 
-                    if mode == 'bpe-min-r' and USE_HF_TOKENIZER == False:
-                        clump_bpe(file_segm, substituted_file)
-                    else:
-                        # copy segmented file to substituted file, use system command
-                        call(['cp', segmented_file, substituted_file])
-                        
+    for file in tqdm(files):
+        OUTPUT_DIR = os.path.join("output", args.language)
+        os.makedirs(os.path.join(get_this_dir(), "..", "..", OUTPUT_DIR), exist_ok=True)
+        print(f"Processing: {file}")
+        file_path = Path(file)
+        file_path_stem = file_path.stem
+        file_path_extension = file_path.suffix
 
-                    with open(results_file, 'w', newline='') as sequences_results:
-                        seq_writer = csv.writer(sequences_results, delimiter='\t')
-                        seq_writer.writerow(['word_split', 'segments_lengths', 'word_length',
-                                             'index', 'variance', 'word',
-                                             'file', 'genre', 'language'])
-                        lang = file.split("_")[0]
-                        genre = 'na'
+        # preprocess, tokenize
+        tokenized_file = preprocess(os.path.join("res", file), OUTPUT_DIR, multiprocessing.cpu_count())
+        
+        # learn and apply BPE
+        print("Tokenizing")
+        file_codes = os.path.join(OUTPUT_DIR, file_path_stem + '_codes' + file_path_extension)
+        file_segm = os.path.join(OUTPUT_DIR, file_path_stem + '_segmented' + file_path_extension)
+        # learn_bpe(tokenized_file, file_codes, 200)
+        if USE_HF_TOKENIZER:
+            apply_hf_tokenizer(tokenized_file, file_segm, file_codes)
+        else:
+            learn_bpe(tokenized_file, file_codes, 200)
+            apply_bpe(tokenized_file, file_segm, file_codes)
+        
+        
+        print("Computing results")
+        for mode in ['bpe-min-r']:
+            for root, dirs, files in os.walk('res/'):
+                for file in files:
+                    if file.endswith(f'{args.extension}.txt'):
+                        print(file)
+                        segmented_file = file_segm
+                        print(segmented_file)
 
-                        with open(substituted_file, 'r') as f:
-                            for line in tqdm(f):
-                                word_split = line.strip()
-                                segments = line.strip().split('|')
-                                word = ''.join(segments)
-                                segments_lengths, index = count_lengths_ui(segments)
-                                variance = count_variance(segments_lengths)
+                        substituted_file = os.path.join(OUTPUT_DIR, file_path_stem + '_substituted' + file_path_extension)
+                        results_file = os.path.join(OUTPUT_DIR, file_path_stem + '_results.csv')
 
-                                seq_writer.writerow([word_split, segments_lengths, len(word),
-                                                     index, variance, word,
-                                                     file, genre, lang])
+                        if mode == 'bpe-min-r' and USE_HF_TOKENIZER == False:
+                            clump_bpe(file_segm, substituted_file)
+                        else:
+                            # copy segmented file to substituted file, use system command
+                            call(['cp', segmented_file, substituted_file])
+                            
+
+                        with open(results_file, 'w', newline='') as sequences_results:
+                            seq_writer = csv.writer(sequences_results, delimiter='\t')
+                            seq_writer.writerow(['word_split', 'segments_lengths', 'word_length',
+                                                'index', 'variance', 'word',
+                                                'file', 'genre', 'language'])
+                            lang = file.split("_")[0]
+                            genre = 'na'
+
+                            with open(substituted_file, 'r') as f:
+                                for line in tqdm(f):
+                                    word_split = line.strip()
+                                    segments = line.strip().split('|')
+                                    word = ''.join(segments)
+                                    segments_lengths, index = count_lengths_ui(segments)
+                                    variance = count_variance(segments_lengths)
+
+                                    seq_writer.writerow([word_split, segments_lengths, len(word),
+                                                        index, variance, word,
+                                                        file, genre, lang])
 
 
 if __name__ == '__main__':
