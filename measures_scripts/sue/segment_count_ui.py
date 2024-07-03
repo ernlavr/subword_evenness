@@ -351,7 +351,7 @@ def main():
             seq_writer.writerow(['word_split', 'segments_lengths', 'word_length',
                                 'index', 'variance', 'word',
                                 'file', 'genre', 'language'])
-            lang = input_file.split("_")[0]
+            lang = input_file[:-4]
             genre = 'na'
 
             with open(substituted_file, 'r') as f:
